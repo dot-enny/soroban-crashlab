@@ -1,34 +1,99 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import RunHistoryTable from './RunHistoryTable';
 import Pagination from './Pagination';
+import CrashDetailDrawer from './CrashDetailDrawer';
 import { FuzzingRun, RunStatus } from './types';
 
-// Mock data for demonstration
-const MOCK_RUNS: FuzzingRun[] = Array.from({ length: 25 }, (_, i) => ({
-  id: `run-${1000 + i}`,
-  status: (['completed', 'failed', 'running', 'cancelled'][i % 4]) as RunStatus,
-  duration: 120000 + (Math.random() * 3600000), // 2m to 1h
-  seedCount: Math.floor(10000 + Math.random() * 90000),
-})).reverse();
+function buildMockRuns(): FuzzingRun[] {
+  return Array.from({ length: 25 }, (_, i) => {
+    const id = `run-${1000 + i}`;
+    const status = (['completed', 'failed', 'running', 'cancelled'][i % 4]) as RunStatus;
+    const crashDetail =
+      status === 'failed'
+        ? {
+            failureCategory: i % 8 === 1 ? 'Panic' : 'InvariantViolation',
+            signature: `sig:${1000 + i}:contract::transfer:assert_balance_nonnegative`,
+            payload: JSON.stringify(
+              {
+                contract: 'token',
+                method: 'transfer',
+                args: {
+                  from: 'GABCD...1234',
+                  to: 'GXYZ...7890',
+                  amount: 999999999,
+                },
+              },
+              null,
+              2,
+            ),
+            replayAction: `cargo run --bin crash-replay -- --run-id ${id}`,
+          }
+        : null;
+    return {
+      id,
+      status,
+      duration: 120000 + Math.random() * 3600000,
+      seedCount: Math.floor(10000 + Math.random() * 90000),
+      crashDetail,
+    };
+  }).reverse();
+}
 
 const ITEMS_PER_PAGE = 10;
 
-export default function Home() {
+function HomeContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [runs, setRuns] = useState<FuzzingRun[]>(buildMockRuns);
   const [selectedCardIndex, setSelectedCardIndex] = useState(0);
   const [showDetailView, setShowDetailView] = useState(false);
   const [showHelp, setShowHelp] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const cardsContainerRef = useRef<HTMLDivElement>(null);
 
-  const totalPages = Math.ceil(MOCK_RUNS.length / ITEMS_PER_PAGE);
+  const selectedRunId = searchParams.get('run');
+  const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) : null;
+
+  const totalPages = Math.ceil(runs.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-  const paginatedRuns = MOCK_RUNS.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  const paginatedRuns = runs.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+  const updateSelectedRunInUrl = useCallback(
+    (runId: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (runId) {
+        params.set('run', runId);
+      } else {
+        params.delete('run');
+      }
+      const query = params.toString();
+      router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [router, pathname, searchParams],
+  );
+
+  const handleOpenRunDrawer = useCallback(
+    (runId: string) => updateSelectedRunInUrl(runId),
+    [updateSelectedRunInUrl],
+  );
+  const handleCloseRunDrawer = useCallback(() => updateSelectedRunInUrl(null), [updateSelectedRunInUrl]);
+
+  const handleReplayComplete = useCallback((newRun: FuzzingRun) => {
+    setRuns((prev) => [newRun, ...prev]);
+  }, []);
+
+  useEffect(() => {
+    if (selectedRunId && !selectedRun) {
+      router.replace(pathname);
+    }
+  }, [selectedRunId, selectedRun, router, pathname]);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    // Focus the table container when page changes for accessibility
     cardsContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -58,7 +123,12 @@ export default function Home() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't handle if modal is open and it's not Escape
+      const runDrawerOpen = Boolean(searchParams.get('run'));
+      if (runDrawerOpen && e.key === 'Escape') {
+        e.preventDefault();
+        handleCloseRunDrawer();
+        return;
+      }
       if (showDetailView && e.key !== 'Escape') return;
 
       switch (e.key) {
@@ -91,7 +161,7 @@ export default function Home() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showDetailView, cards.length]);
+  }, [showDetailView, cards.length, searchParams, handleCloseRunDrawer]);
 
   const handleCardClick = (index: number) => {
     setSelectedCardIndex(index);
@@ -109,7 +179,6 @@ export default function Home() {
         </p>
       </div>
 
-      {/* Help Panel */}
       {showHelp && (
         <div className="mb-8 w-full max-w-3xl border border-blue-200 dark:border-blue-800 rounded-lg p-4 bg-blue-50 dark:bg-blue-950/30">
           <div className="flex items-start justify-between">
@@ -180,15 +249,14 @@ export default function Home() {
         })}
       </div>
 
-      {/* Run History Section */}
       <div className="w-full mb-8">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold">Recent Fuzzing Runs</h2>
           <div className="px-3 py-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg text-xs font-medium text-zinc-500">
-            {MOCK_RUNS.length} Total Runs
+            {runs.length} Total Runs
           </div>
         </div>
-        <RunHistoryTable runs={paginatedRuns} />
+        <RunHistoryTable runs={paginatedRuns} onSelectRun={handleOpenRunDrawer} />
         <Pagination
           currentPage={currentPage}
           totalPages={totalPages}
@@ -196,7 +264,6 @@ export default function Home() {
         />
       </div>
 
-      {/* Detail View Modal */}
       {showDetailView && (
         <div
           className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4"
@@ -252,6 +319,14 @@ export default function Home() {
         </div>
       )}
 
+      {selectedRun && (
+        <CrashDetailDrawer
+          run={selectedRun}
+          onClose={handleCloseRunDrawer}
+          onReplayComplete={handleReplayComplete}
+        />
+      )}
+
       <div className="mt-16 text-center border-t border-black/[.08] dark:border-white/[.145] pt-12 w-full">
         <h2 className="text-2xl font-bold mb-4">Stellar Wave 3 is Open!</h2>
         <p className="text-zinc-600 dark:text-zinc-400 mb-8 max-w-2xl mx-auto">
@@ -277,5 +352,17 @@ export default function Home() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-1 items-center justify-center min-h-[50vh] text-zinc-500 dark:text-zinc-400">
+        Loading…
+      </div>
+    }>
+      <HomeContent />
+    </Suspense>
   );
 }
