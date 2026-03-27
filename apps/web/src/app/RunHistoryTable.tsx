@@ -5,7 +5,7 @@ import { FuzzingRun, RunStatus } from './types';
 interface RunHistoryTableProps {
     /** Array of fuzzing runs to display */
     runs: FuzzingRun[];
-    /** Called when a row is selected */
+    /** Called when a row is selected to open crash details */
     onSelectRun: (runId: string) => void;
 }
 
@@ -73,14 +73,24 @@ export default function RunHistoryTable({ runs, onSelectRun }: RunHistoryTablePr
                         {runs.map((run) => (
                             <tr
                                 key={run.id}
+                                tabIndex={0}
                                 className="group hover:bg-zinc-50 dark:hover:bg-zinc-900/30 transition-colors cursor-pointer"
                                 onClick={() => onSelectRun(run.id)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        onSelectRun(run.id);
+                                    }
+                                }}
                             >
                                 <td className="px-6 py-4">
                                     <button
                                         type="button"
-                                        onClick={() => onSelectRun(run.id)}
-                                        className="text-sm font-mono text-blue-600 dark:text-blue-400 hover:underline decoration-blue-500/30 underline-offset-4"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onSelectRun(run.id);
+                                        }}
+                                        className="text-sm font-mono text-blue-600 dark:text-blue-400 hover:underline decoration-blue-500/30 underline-offset-4 text-left"
                                     >
                                         {run.id}
                                     </button>

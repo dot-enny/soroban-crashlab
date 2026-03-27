@@ -5,6 +5,7 @@ import { Suspense, useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import RunHistoryTable from './RunHistoryTable';
 import Pagination from './Pagination';
+import CrashDetailDrawer from './CrashDetailDrawer';
 import { FuzzingRun, RunStatus } from './types';
 import CrashDetailDrawer from './CrashDetailDrawer';
 
@@ -57,6 +58,7 @@ function HomeContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [runs, setRuns] = useState<FuzzingRun[]>(buildMockRuns);
   const [selectedCardIndex, setSelectedCardIndex] = useState(0);
   const [showDetailView, setShowDetailView] = useState(false);
   const [showHelp, setShowHelp] = useState(true);
@@ -64,15 +66,45 @@ function HomeContent() {
   const cardsContainerRef = useRef<HTMLDivElement>(null);
   const selectedRunId = searchParams.get('run');
 
-  const totalPages = Math.ceil(MOCK_RUNS.length / ITEMS_PER_PAGE);
+  const selectedRunId = searchParams.get('run');
+  const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) : null;
+
+  const totalPages = Math.ceil(runs.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-  const paginatedRuns = MOCK_RUNS.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-  const expensiveRuns = paginatedRuns.filter(isExpensiveRun);
-  const selectedRun = selectedRunId ? MOCK_RUNS.find((run) => run.id === selectedRunId) : null;
+  const paginatedRuns = runs.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+  const updateSelectedRunInUrl = useCallback(
+    (runId: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (runId) {
+        params.set('run', runId);
+      } else {
+        params.delete('run');
+      }
+      const query = params.toString();
+      router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [router, pathname, searchParams],
+  );
+
+  const handleOpenRunDrawer = useCallback(
+    (runId: string) => updateSelectedRunInUrl(runId),
+    [updateSelectedRunInUrl],
+  );
+  const handleCloseRunDrawer = useCallback(() => updateSelectedRunInUrl(null), [updateSelectedRunInUrl]);
+
+  const handleReplayComplete = useCallback((newRun: FuzzingRun) => {
+    setRuns((prev) => [newRun, ...prev]);
+  }, []);
+
+  useEffect(() => {
+    if (selectedRunId && !selectedRun) {
+      router.replace(pathname);
+    }
+  }, [selectedRunId, selectedRun, router, pathname]);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    // Focus the table container when page changes for accessibility
     cardsContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -102,7 +134,12 @@ function HomeContent() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't handle if modal is open and it's not Escape
+      const runDrawerOpen = Boolean(searchParams.get('run'));
+      if (runDrawerOpen && e.key === 'Escape') {
+        e.preventDefault();
+        handleCloseRunDrawer();
+        return;
+      }
       if (showDetailView && e.key !== 'Escape') return;
 
       switch (e.key) {
@@ -135,7 +172,7 @@ function HomeContent() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showDetailView, cards.length]);
+  }, [showDetailView, cards.length, searchParams, handleCloseRunDrawer]);
 
   const handleCardClick = (index: number) => {
     setSelectedCardIndex(index);
@@ -169,7 +206,6 @@ function HomeContent() {
         </p>
       </div>
 
-      {/* Help Panel */}
       {showHelp && (
         <div className="mb-8 w-full max-w-3xl border border-blue-200 dark:border-blue-800 rounded-lg p-4 bg-blue-50 dark:bg-blue-950/30">
           <div className="flex items-start justify-between">
@@ -240,12 +276,11 @@ function HomeContent() {
         })}
       </div>
 
-      {/* Run History Section */}
       <div className="w-full mb-8">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold">Recent Fuzzing Runs</h2>
           <div className="px-3 py-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg text-xs font-medium text-zinc-500">
-            {MOCK_RUNS.length} Total Runs
+            {runs.length} Total Runs
           </div>
         </div>
         <div className="mb-5 border border-amber-200 dark:border-amber-900/50 rounded-xl p-4 bg-amber-50/70 dark:bg-amber-950/20">
@@ -282,7 +317,6 @@ function HomeContent() {
         />
       </div>
 
-      {/* Detail View Modal */}
       {showDetailView && (
         <div
           className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4"
@@ -339,7 +373,11 @@ function HomeContent() {
       )}
 
       {selectedRun && (
-        <CrashDetailDrawer run={selectedRun} onClose={handleCloseRunDrawer} />
+        <CrashDetailDrawer
+          run={selectedRun}
+          onClose={handleCloseRunDrawer}
+          onReplayComplete={handleReplayComplete}
+        />
       )}
 
       <div className="mt-16 text-center border-t border-black/[.08] dark:border-white/[.145] pt-12 w-full">
@@ -372,7 +410,11 @@ function HomeContent() {
 
 export default function Home() {
   return (
-    <Suspense fallback={<div className="py-20 text-center text-zinc-500">Loading dashboard…</div>}>
+    <Suspense fallback={
+      <div className="flex flex-1 items-center justify-center min-h-[50vh] text-zinc-500 dark:text-zinc-400">
+        Loading…
+      </div>
+    }>
       <HomeContent />
     </Suspense>
   );
