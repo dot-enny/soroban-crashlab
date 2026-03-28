@@ -595,6 +595,15 @@ function HomeContent() {
       </div>
 
       <div className="mb-12 w-full">
+        <RunClusterVisualization 
+          runs={filteredRuns} 
+          onRunSelect={handleOpenRunDrawer}
+          showTimeline={true}
+          showMetrics={true}
+        />
+      </div>
+
+      <div className="mb-12 w-full">
         <AddTaggingAndLabelsUi runs={filteredRuns} />
       </div>
 
